@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="referrer" content="no-referrer" />
+<title>伴伴監控</title>
+<!--
+  B-055（D-60）：Founder 的遠端監控網頁外殼。這個檔案放在公開的 GitHub Pages（P-37），所以裡面沒有任何資料與密碼；
+  資料只從 Edge Function monitor 拿（要先用密碼換通行證）。https://tmbfdhywqvmrzvfaijxb.supabase.co 由 scripts/monitor-web/publish.sh 換成 Supabase 的網址。
+-->
+<style>
+  :root { --bg: #f6f4f1; --card: #fff; --text: #22201d; --muted: #6f6a63; --line: #e4dfd8; --accent: #2f6fde; --now: #e8f0ff; --warn: #b3541e; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #161513; --card: #211f1c; --text: #f1ede8; --muted: #a39d95; --line: #35322d; --accent: #7aa7ff; --now: #1f2b44; --warn: #f0995f; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; gap: 8px; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; flex: 1; }
+  main { padding: 12px 16px 40px; max-width: 900px; margin: 0 auto; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text); border-radius: 10px; padding: 6px 12px; }
+  button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 12px 0; }
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  h3 { font-size: 16px; margin: 16px 0 8px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  .warn { color: var(--warn); }
+  .pages { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; }
+  .page { border: 2px solid transparent; border-radius: 10px; padding: 4px; background: var(--bg); }
+  .page.now { border-color: var(--accent); background: var(--now); }
+  .page .imgs { display: flex; gap: 2px; aspect-ratio: 16 / 10; overflow: hidden; border-radius: 6px; background: #000; }
+  .page img { flex: 1; min-width: 0; height: 100%; object-fit: cover; display: block; }
+  .page .cap { font-size: 12px; color: var(--muted); padding: 2px 2px 0; }
+  .tag { display: inline-block; font-size: 12px; padding: 0 6px; border-radius: 6px; background: var(--accent); color: #fff; }
+  .listen { display: flex; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .listen:first-child { border-top: 0; }
+  .listen img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; background: #000; flex: none; }
+  .listen .ph { width: 72px; height: 72px; border-radius: 8px; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 28px; flex: none; }
+  .listen audio, .listen video { width: 100%; max-width: 320px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+  td.t { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .login { max-width: 360px; margin: 18vh auto 0; }
+  .login input { width: 100%; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); margin: 8px 0; }
+  .login button { width: 100%; padding: 10px; }
+  details summary { cursor: pointer; color: var(--accent); font-size: 14px; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const API = "https://tmbfdhywqvmrzvfaijxb.supabase.co/functions/v1/monitor";
+const TOKEN_KEY = "banban-monitor-token";
+const app = document.getElementById("app");
+const store = {
+  get() { try { return localStorage.getItem(TOKEN_KEY); } catch { return null; } },
+  set(v) { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch {} },
+};
+
+// 畫面編號 → 名字（PRD 長輩端畫面）
+const SCREENS = { S02: "準備中", S03: "歡迎", S04: "相框", "S04-night": "相框（晚上點亮）", "S04-options": "相框的選項", S05: "有新訊息", S06: "播放", S07: "播完", S08: "說話中", S09: "帶到了", S10: "想跟誰說話", S13: "睡覺時間到了", S14: "早安", S15: "播放訊息" };
+// 按鈕名稱（平板上的 data-tap）→ 白話
+const TARGETS = {
+  "S04.round": "相框的圓鈕（找家人）", "S04.options.listen": "選項「播放訊息」", "S04.options.talk": "選項「聯繫家人」", "S04.options.close": "選項的關閉鈕（×）", "S04.options.outside": "選項以外的地方（收起選項）",
+  "S05.play": "「播放」", "S07.end": "「結束」", "S07.talk": "「帶話給…」", "S07.replay_photo": "照片（再看一次）", "S07.replay_hint": "「點一下，可以再看一次」",
+  "S08.done": "「說好了」", "S10.back": "「回到相框」", "S14.talk": "「跟家人說早安」", "S15.end": "「結束播放」", screen: "畫面（沒點到按鈕）", button: "按鈕",
+};
+const KIND = { photos: "照片", video: "影片", voice: "語音" };
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+const tw = (iso, withDate = true) => iso ? new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", hour12: false, ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso)) : "—";
+const ago = (iso) => {
+  if (!iso) return "從來沒有";
+  const s = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return `${s} 秒前`;
+  if (s < 5400) return `${Math.round(s / 60)} 分鐘前`;
+  if (s < 172800) return `${Math.round(s / 3600)} 小時前`;
+  return `${Math.round(s / 86400)} 天前`;
+};
+const screenName = (id) => (id ? `${SCREENS[id] ?? id}（${id}）` : "—");
+const targetName = (t) => {
+  if (!t) return "";
+  const m = /^S10\.person\.(\d+)$/.exec(t);
+  if (m) return `第 ${Number(m[1]) + 1} 位家人`;
+  return TARGETS[t] ?? t;
+};
+
+function renderLogin(message) {
+  app.innerHTML = `<form class="login card" id="f">
+    <h2>伴伴監控</h2>
+    <div class="muted">輸入監控密碼（只要輸入一次，這支手機會記住 30 天）</div>
+    <input type="password" id="pw" autocomplete="current-password" placeholder="監控密碼" required />
+    ${message ? `<div class="warn">${esc(message)}</div>` : ""}
+    <button class="primary" type="submit">登入</button>
+  </form>`;
+  document.getElementById("f").onsubmit = async (e) => {
+    e.preventDefault();
+    const res = await fetch(`${API}/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: document.getElementById("pw").value }) }).catch(() => null);
+    if (!res) return renderLogin("連不上伺服器，請稍後再試");
+    if (res.status === 429) return renderLogin("密碼錯太多次，請 15 分鐘後再試");
+    if (!res.ok) return renderLogin("密碼不對");
+    store.set((await res.json()).token);
+    load();
+  };
+}
+
+function focusLabel(w, focus) {
+  if (!focus) return "";
+  const [id, idx] = focus.split(":");
+  if (id === "default") return `預設照片 ${Number(idx) + 1}`;
+  const m = w.focusMessages[id];
+  if (!m) return "（已刪除的內容）";
+  return `${esc(m.memberName ?? "家人")}的${KIND[m.kind] ?? ""}${m.kind === "photos" ? ` 第 ${Number(idx) + 1} 張` : ""}（${tw(m.sentAt)}）`;
+}
+
+function renderWindow(w) {
+  const d = w.device;
+  const dev = d
+    ? `<div>最後上線：<b>${ago(d.lastSeenAt)}</b> <span class="muted">${tw(d.lastSeenAt)}</span></div>
+       <div>現在的畫面：<b>${esc(screenName(d.screen))}</b></div>
+       <div class="muted">電量 ${d.batteryPct ?? "—"}%${d.charging ? "（充電中）" : d.charging === false ? '<span class="warn">（沒在充電）</span>' : ""} · 還沒看的分享 ${d.queueLen} · 待送 ${d.pendingCount} · 版本 ${esc(d.appVersion ?? "—")}</div>`
+    : `<div class="warn">這個家庭還沒有開通平板</div>`;
+
+  const pages = w.frame.pages;
+  const frame = pages.length
+    ? `<div class="muted">共 ${pages.length} 頁，每頁輪流顯示；藍框＝最後一次回報時正在顯示的${w.frame.since ? `（${tw(w.frame.since)} 換到這頁）` : ""}。平板不在相框畫面時，這裡是離開相框前的樣子。</div>
+       <div class="pages">${pages.map((p, i) => `<div class="page${i === w.frame.index ? " now" : ""}">
+          <div class="imgs">${p.map((s) => (s.url ? `<img loading="lazy" src="${esc(s.url)}" alt="" />` : `<div style="flex:1;color:#fff;font-size:12px;padding:6px">沒有縮圖</div>`)).join("")}</div>
+          <div class="cap">${i + 1}. ${i === w.frame.index ? '<span class="tag">正在顯示</span> ' : ""}${p.length === 2 ? "兩張並排 · " : ""}${p[0].kind === "default" ? "預設照片" : `${esc(p[0].memberName ?? "家人")}${p[0].kind === "video" ? "的影片" : ""} · ${tw(p[0].sentAt)}`}</div>
+        </div>`).join("")}</div>`
+    : `<div class="muted">平板還沒回報相框（裝了新版、進到相框之後一分鐘內會出現）</div>`;
+
+  const listen = w.listen.length
+    ? `<div class="muted">點選項「播放訊息」時，照這個順序播放（左右滑會繞一圈）</div>${w.listen.map((m, i) => `<div class="listen">
+        ${m.thumbUrl ? `<img loading="lazy" src="${esc(m.thumbUrl)}" alt="" />` : `<div class="ph">${m.kind === "voice" ? "🎙" : "▶"}</div>`}
+        <div style="flex:1;min-width:0"><div><b>${i + 1}. ${esc(m.memberName ?? "家人")}</b> 的${KIND[m.kind]}${m.durationMs ? `（${Math.round(m.durationMs / 1000)} 秒）` : ""}</div>
+        <div class="muted">${tw(m.sentAt)} 傳的</div>
+        ${m.mediaUrl ? (m.kind === "video" ? `<video controls preload="none" playsinline src="${esc(m.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(m.mediaUrl)}"></audio>`) : ""}</div>
+      </div>`).join("")}`
+    : `<div class="muted">播放訊息裡目前沒有東西</div>`;
+
+  const rows = w.log.map((l) => {
+    let what;
+    if (l.name === "screen_view") what = `畫面換到 <b>${esc(screenName(l.screen))}</b>${l.target ? `<span class="muted">（從 ${esc(screenName(l.target))}）</span>` : ""}`;
+    else if (l.name === "ui_swipe") what = `在 ${esc(screenName(l.screen))} <b>${l.dir === "next" ? "往左滑（下一則）" : "往右滑（上一則）"}</b>`;
+    else what = `在 ${esc(screenName(l.screen))} 點了 <b>${esc(targetName(l.target))}</b>${l.target === "screen" && l.x !== null ? `<span class="muted">（位置：左右 ${l.x}%、上下 ${l.y}%）</span>` : ""}`;
+    const f = focusLabel(w, l.focus);
+    return `<tr><td class="t">${tw(l.at)}</td><td>${what}${f ? `<div class="muted">當時：${f}</div>` : ""}</td></tr>`;
+  }).join("");
+  const log = w.log.length ? `<table>${rows}</table>` : `<div class="muted">還沒有點擊紀錄（裝了新版之後才會有）</div>`;
+
+  const elder = w.elderNames.length ? w.elderNames.join("、") : w.salutation;
+  return `<section class="card">
+    <h2>${esc(elder)} 的家${w.paused ? ' <span class="tag">暫停中</span>' : ""}</h2>
+    ${dev}
+    <h3>相框</h3>${frame}
+    <h3>播放訊息</h3>${listen}
+    <h3>點擊與操作紀錄 <span class="muted">（最近 ${w.log.length} 筆，台灣時間）</span></h3>${log}
+  </section>`;
+}
+
+let timer = null;
+async function load() {
+  const token = store.get();
+  if (!token) return renderLogin();
+  const res = await fetch(`${API}/overview`, { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
+  if (!res) { app.querySelector("#status") ? (app.querySelector("#status").textContent = "連不上伺服器，稍後自動再試") : renderLogin("連不上伺服器，請稍後再試"); return; }
+  if (res.status === 401) { store.set(null); return renderLogin("請重新登入"); }
+  if (!res.ok) { renderLogin("伺服器出錯了，請稍後再試"); return; }
+  const data = await res.json();
+  const y = window.scrollY;
+  app.innerHTML = `<header><h1>伴伴監控</h1><button id="r">重新整理</button><button id="o">登出</button></header>
+    <main><div class="muted" id="status">資料時間：${tw(data.generatedAt)}（每分鐘自動更新；照片網址 10 分鐘內有效）</div>
+    ${data.windows.length ? data.windows.map(renderWindow).join("") : '<div class="card">還沒有家庭</div>'}</main>`;
+  window.scrollTo(0, y);
+  document.getElementById("r").onclick = load;
+  document.getElementById("o").onclick = () => { store.set(null); renderLogin(); };
+  clearTimeout(timer);
+  // 有影片或語音正在播就不自動更新（不打斷 Founder 聽）
+  timer = setTimeout(function tick() {
+    const playing = [...document.querySelectorAll("audio, video")].some((m) => !m.paused);
+    playing ? (timer = setTimeout(tick, 60000)) : load();
+  }, 60000);
+}
+load();
+</script>
+</body>
+</html>
