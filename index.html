@@ -47,8 +47,11 @@
   /* D-61 ②：隱藏的入口收在右下角的「⋯」，點了才出現選項，再確認一次 */
   .cell { position: relative; flex: 1; min-width: 0; height: 100%; }
   .cell img { width: 100%; }
-  .cell.off img { opacity: .35; }
-  .cell .off-tag { position: absolute; left: 4px; top: 4px; font-size: 11px; padding: 0 5px; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff; }
+  .hgrid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+  .hcell { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; background: var(--bg); }
+  .hcell img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .6; }
+  .hcell .ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .hcell button.more { right: 2px; bottom: 2px; width: 22px; height: 16px; line-height: 16px; font-size: 11px; }
   button.more { position: absolute; right: 3px; bottom: 3px; width: 26px; height: 20px; padding: 0; border: 0; border-radius: 6px; background: rgba(0,0,0,.35); color: #fff; font-size: 13px; line-height: 20px; letter-spacing: 1px; }
   .listen { position: relative; padding-right: 30px; }
   .listen button.more { background: transparent; color: var(--muted); bottom: 6px; right: 0; }
@@ -224,15 +227,16 @@ function renderWindow(w) {
   const hiddenKeys = new Set(w.hidden.map((h) => `${h.messageId}:${h.idx}`));
   const slideLabel = (s) => `${s.memberName ?? "家人"}的${s.kind === "video" ? "影片" : "照片"}（${tw(s.sentAt)}）`;
   const cell = (s) => {
-    const off = hiddenKeys.has(s.key);
     const img = s.url ? `<img loading="lazy" src="${esc(s.url)}" alt="" />` : `<div style="color:#fff;font-size:12px;padding:6px">沒有縮圖</div>`;
-    return `<div class="cell${off ? " off" : ""}">${img}${off ? '<span class="off-tag">已隱藏</span>' : ""}${s.kind === "default" ? "" : moreBtn(s.key, !off, slideLabel(s), s.url)}</div>`;
+    return `<div class="cell">${img}${s.kind === "default" ? "" : moreBtn(s.key, true, slideLabel(s), s.url)}</div>`;
   };
-  const frame = pages.length
-    ? `<div class="muted">共 ${pages.length} 頁，每頁輪流顯示；藍框＝最後一次回報時正在顯示的${w.frame.since ? `（${tw(w.frame.since)} 換到這頁）` : ""}。平板不在相框畫面時，這裡是離開相框前的樣子。</div>
-       <div class="pages">${pages.map((p, i) => `<div class="page${i === w.frame.index ? " now" : ""}">
+  // 已隱藏的直接從相框拿掉（平板回報的清單可能還沒更新），只列在「已隱藏」
+  const shown = pages.map((p, i) => ({ p: p.filter((sl) => !hiddenKeys.has(sl.key)), i })).filter((x) => x.p.length);
+  const frame = shown.length
+    ? `<div class="muted">共 ${shown.length} 頁，每頁輪流顯示；藍框＝最後一次回報時正在顯示的${w.frame.since ? `（${tw(w.frame.since)} 換到這頁）` : ""}。平板不在相框畫面時，這裡是離開相框前的樣子。</div>
+       <div class="pages">${shown.map(({ p, i }, n) => `<div class="page${i === w.frame.index ? " now" : ""}">
           <div class="imgs">${p.map(cell).join("")}</div>
-          <div class="cap">${i + 1}. ${i === w.frame.index ? '<span class="tag">正在顯示</span> ' : ""}${p.length === 2 ? "兩張並排 · " : ""}${p[0].kind === "default" ? "預設照片" : `${esc(p[0].memberName ?? "家人")}${p[0].kind === "video" ? "的影片" : ""} · ${tw(p[0].sentAt)}`}</div>
+          <div class="cap">${n + 1}. ${i === w.frame.index ? '<span class="tag">正在顯示</span> ' : ""}${p.length === 2 ? "兩張並排 · " : ""}${p[0].kind === "default" ? "預設照片" : `${esc(p[0].memberName ?? "家人")}${p[0].kind === "video" ? "的影片" : ""} · ${tw(p[0].sentAt)}`}</div>
         </div>`).join("")}</div>`
     : `<div class="muted">平板還沒回報相框（裝了新版、進到相框之後一分鐘內會出現）</div>`;
 
@@ -256,14 +260,12 @@ function renderWindow(w) {
   }).join("");
   const log = w.log.length ? `<table>${rows}</table>` : `<div class="muted">還沒有點擊紀錄（裝了新版之後才會有）</div>`;
 
+  // 已隱藏：只放小縮圖，不佔畫面；按「⋯」可以取消隱藏
   const hidden = w.hidden.length
-    ? `<div class="muted">平板不會顯示這些（相框、播放訊息、新分享都不出現）；資料沒有刪，按右下角的「⋯」可以取消隱藏</div>${w.hidden.map((h) => `<div class="listen">
+    ? `<div class="muted">平板不會顯示這些；資料沒有刪，按「⋯」可以取消隱藏</div><div class="hgrid">${w.hidden.map((h) => `<div class="hcell" title="${esc(`${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}）`)}">
         ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : "▶"}</div>`}
-        <div style="flex:1;min-width:0"><div><b>${esc(h.memberName ?? "家人")}</b> 的${KIND[h.kind]}${h.kind === "photos" ? ` 第 ${h.idx + 1} 張` : ""}</div>
-        <div class="muted">${tw(h.sentAt)} 傳的 · ${tw(h.hiddenAt)} 隱藏</div>
-        ${h.mediaUrl ? (h.kind === "video" ? `<video controls preload="none" playsinline src="${esc(h.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(h.mediaUrl)}"></audio>`) : ""}
-        </div>${moreBtn(`${h.messageId}:${h.idx}`, false, `${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}）`, h.thumbUrl)}
-      </div>`).join("")}`
+        ${moreBtn(`${h.messageId}:${h.idx}`, false, `${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}，${tw(h.hiddenAt)} 隱藏）`, h.thumbUrl)}
+      </div>`).join("")}</div>`
     : `<div class="muted">沒有隱藏的內容。相框或播放訊息裡按右下角的「⋯」可以隱藏，平板一分鐘內就不再顯示（不刪資料）</div>`;
 
   const counts = w.features[ui.range] ?? {};
@@ -295,7 +297,7 @@ function renderWindow(w) {
     ${dev}
     <h3>相框</h3>${frame}
     <h3>播放訊息</h3>${listen}
-    <h3>已隱藏</h3>${hidden}
+    <h3>已隱藏${w.hidden.length ? ` <span class="muted">（${w.hidden.length}）</span>` : ""}</h3>${hidden}
     <h3>功能使用排行</h3>${features}
     <h3>每次使用的路徑 <span class="muted">（最近 ${w.journeys.length} 次，台灣時間）</span></h3>${journeys}
     <details><summary>點擊與操作紀錄（最近 ${w.log.length} 筆）</summary> ${log}</details>
