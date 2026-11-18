@@ -44,8 +44,21 @@
   .login input { width: 100%; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); margin: 8px 0; }
   .login button { width: 100%; padding: 10px; }
   details summary { cursor: pointer; color: var(--accent); font-size: 14px; margin-top: 8px; }
-  button.hide { font-size: 12px; padding: 1px 8px; border-radius: 8px; color: var(--warn); margin: 2px 4px 0 0; }
-  .hides { padding: 0 2px; }
+  /* D-61 ②：隱藏的入口收在右下角的「⋯」，點了才出現選項，再確認一次 */
+  .cell { position: relative; flex: 1; min-width: 0; height: 100%; }
+  .cell img { width: 100%; }
+  .cell.off img { opacity: .35; }
+  .cell .off-tag { position: absolute; left: 4px; top: 4px; font-size: 11px; padding: 0 5px; border-radius: 5px; background: rgba(0,0,0,.6); color: #fff; }
+  button.more { position: absolute; right: 3px; bottom: 3px; width: 26px; height: 20px; padding: 0; border: 0; border-radius: 6px; background: rgba(0,0,0,.35); color: #fff; font-size: 13px; line-height: 20px; letter-spacing: 1px; }
+  .listen { position: relative; padding-right: 30px; }
+  .listen button.more { background: transparent; color: var(--muted); bottom: 6px; right: 0; }
+  .sheet-bg { position: fixed; inset: 0; z-index: 10; background: rgba(0,0,0,.4); display: flex; align-items: flex-end; justify-content: center; }
+  .sheet { width: 100%; max-width: 480px; background: var(--card); color: var(--text); border-radius: 16px 16px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .sheet .who { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .sheet .who img, .sheet .who .ph { width: 56px; height: 56px; border-radius: 8px; object-fit: cover; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 24px; flex: none; }
+  .sheet button { display: block; width: 100%; padding: 12px; margin-top: 8px; font-size: 16px; }
+  .sheet button.danger { background: var(--warn); border-color: var(--warn); color: #fff; }
+  .sheet p { margin: 0 0 4px; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
   .seg button { border: 0; border-radius: 0; font-size: 14px; }
   .seg button.on { background: var(--accent); color: #fff; }
@@ -151,25 +164,45 @@ function focusLabel(w, focus) {
   return `${esc(m.memberName ?? "家人")}的${KIND[m.kind] ?? ""}${m.kind === "photos" ? ` 第 ${Number(idx) + 1} 張` : ""}（${tw(m.sentAt)}）`;
 }
 
-const hideBtn = (key, label) => `<button class="hide" data-key="${esc(key)}" data-hidden="1">${esc(label)}</button>`;
+// D-61 ②：右下角「⋯」→ 選項 → 再確認一次 → 隱藏／取消隱藏（不刪資料）。
+// 不用瀏覽器的 confirm()：有些瀏覽器（例如 App 內建的瀏覽器）會直接擋掉，按了看起來沒反應。
+const moreBtn = (key, hide, label, thumb) => `<button class="more" aria-label="更多" data-key="${esc(key)}" data-hide="${hide ? 1 : 0}" data-label="${esc(label)}" data-thumb="${esc(thumb ?? "")}">⋯</button>`;
+let sheetOpen = false;
 
-// D-61 ②：隱藏、取消隱藏（不刪資料）
-async function setHidden(key, hidden) {
-  const [messageId, idx] = key.split(":");
-  const ok = hidden
-    ? confirm("要把這一則從平板上隱藏嗎？\n\n平板大約一分鐘內就不再顯示（相框、播放訊息都不出現）。\n不會刪掉資料，也不會通知家人；之後可以在「已隱藏」取消。")
-    : confirm("要取消隱藏嗎？平板下次同步就會再顯示。");
-  if (!ok) return;
-  const res = await fetch(`${API}/hide`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${store.get()}` }, body: JSON.stringify({ messageId, idx: Number(idx), hidden }) }).catch(() => null);
-  if (!res) return alert("連不上伺服器，請稍後再試");
-  if (res.status === 401) { store.set(null); return renderLogin("請重新登入"); }
-  if (!res.ok) return alert("沒有成功，請重新整理再試一次");
-  load();
+function openSheet(b) {
+  const { key, label, thumb } = b.dataset;
+  const hide = b.dataset.hide === "1";
+  const bg = document.createElement("div");
+  bg.className = "sheet-bg";
+  const close = () => { bg.remove(); sheetOpen = false; };
+  bg.onclick = (e) => { if (e.target === bg) close(); };
+  const who = `<div class="who">${thumb ? `<img src="${esc(thumb)}" alt="" />` : `<div class="ph">🎙</div>`}<div>${esc(label)}</div></div>`;
+  const step = (html, wire) => { bg.innerHTML = `<div class="sheet">${who}${html}</div>`; wire(); };
+  const menu = () => step(
+    `<button id="sh-act">${hide ? "從平板隱藏" : "取消隱藏"}</button><button id="sh-no">取消</button>`,
+    () => { bg.querySelector("#sh-act").onclick = confirmStep; bg.querySelector("#sh-no").onclick = close; });
+  const confirmStep = () => step(
+    hide
+      ? `<p><b>確定要從平板隱藏嗎？</b></p><p class="muted">平板大約一分鐘內就不再顯示（相框、播放訊息都不出現）。不刪資料、不通知家人，之後可以在「已隱藏」取消。</p><button id="sh-yes" class="danger">確定隱藏</button><button id="sh-no">不要</button>`
+      : `<p><b>確定要取消隱藏嗎？</b></p><p class="muted">平板下次同步（大約一分鐘內）就會再顯示。</p><button id="sh-yes" class="primary">確定取消隱藏</button><button id="sh-no">不要</button>`,
+    () => { bg.querySelector("#sh-yes").onclick = send; bg.querySelector("#sh-no").onclick = close; });
+  const send = async () => {
+    step(`<p>處理中…</p>`, () => {});
+    const [messageId, idx] = key.split(":");
+    const res = await fetch(`${API}/hide`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${store.get()}` }, body: JSON.stringify({ messageId, idx: Number(idx), hidden: hide }) }).catch(() => null);
+    if (res && res.status === 401) { close(); store.set(null); return renderLogin("請重新登入"); }
+    const msg = !res ? "連不上伺服器，請稍後再試" : !res.ok ? `沒有成功（${res.status}），請重新整理再試一次` : hide ? "已隱藏。平板大約一分鐘內就不再顯示。" : "已取消隱藏。平板大約一分鐘內就會再顯示。";
+    step(`<p>${esc(msg)}</p><button id="sh-ok" class="primary">好</button>`, () => { bg.querySelector("#sh-ok").onclick = close; });
+    if (res && res.ok) load();
+  };
+  sheetOpen = true;
+  document.body.appendChild(bg);
+  menu();
 }
 
 app.addEventListener("click", (e) => {
-  const b = e.target.closest("button.hide");
-  if (b) return void setHidden(b.dataset.key, b.dataset.hidden === "1");
+  const b = e.target.closest("button.more");
+  if (b) return void openSheet(b);
   const r = e.target.closest(".seg button");
   if (r) { ui.range = r.dataset.range; load(); }
 });
@@ -188,12 +221,18 @@ function renderWindow(w) {
     : `<div class="warn">這個家庭還沒有開通平板</div>`;
 
   const pages = w.frame.pages;
+  const hiddenKeys = new Set(w.hidden.map((h) => `${h.messageId}:${h.idx}`));
+  const slideLabel = (s) => `${s.memberName ?? "家人"}的${s.kind === "video" ? "影片" : "照片"}（${tw(s.sentAt)}）`;
+  const cell = (s) => {
+    const off = hiddenKeys.has(s.key);
+    const img = s.url ? `<img loading="lazy" src="${esc(s.url)}" alt="" />` : `<div style="color:#fff;font-size:12px;padding:6px">沒有縮圖</div>`;
+    return `<div class="cell${off ? " off" : ""}">${img}${off ? '<span class="off-tag">已隱藏</span>' : ""}${s.kind === "default" ? "" : moreBtn(s.key, !off, slideLabel(s), s.url)}</div>`;
+  };
   const frame = pages.length
     ? `<div class="muted">共 ${pages.length} 頁，每頁輪流顯示；藍框＝最後一次回報時正在顯示的${w.frame.since ? `（${tw(w.frame.since)} 換到這頁）` : ""}。平板不在相框畫面時，這裡是離開相框前的樣子。</div>
        <div class="pages">${pages.map((p, i) => `<div class="page${i === w.frame.index ? " now" : ""}">
-          <div class="imgs">${p.map((s) => (s.url ? `<img loading="lazy" src="${esc(s.url)}" alt="" />` : `<div style="flex:1;color:#fff;font-size:12px;padding:6px">沒有縮圖</div>`)).join("")}</div>
+          <div class="imgs">${p.map(cell).join("")}</div>
           <div class="cap">${i + 1}. ${i === w.frame.index ? '<span class="tag">正在顯示</span> ' : ""}${p.length === 2 ? "兩張並排 · " : ""}${p[0].kind === "default" ? "預設照片" : `${esc(p[0].memberName ?? "家人")}${p[0].kind === "video" ? "的影片" : ""} · ${tw(p[0].sentAt)}`}</div>
-          <div class="hides">${p.map((sl, j) => (sl.kind === "default" ? "" : hideBtn(sl.key, p.length === 2 ? (j === 0 ? "隱藏左邊" : "隱藏右邊") : sl.kind === "video" ? "隱藏影片" : "隱藏"))).join("")}</div>
         </div>`).join("")}</div>`
     : `<div class="muted">平板還沒回報相框（裝了新版、進到相框之後一分鐘內會出現）</div>`;
 
@@ -201,8 +240,9 @@ function renderWindow(w) {
     ? `<div class="muted">點選項「播放訊息」時，照這個順序播放（左右滑會繞一圈）</div>${w.listen.map((m, i) => `<div class="listen">
         ${m.thumbUrl ? `<img loading="lazy" src="${esc(m.thumbUrl)}" alt="" />` : `<div class="ph">${m.kind === "voice" ? "🎙" : "▶"}</div>`}
         <div style="flex:1;min-width:0"><div><b>${i + 1}. ${esc(m.memberName ?? "家人")}</b> 的${KIND[m.kind]}${m.durationMs ? `（${Math.round(m.durationMs / 1000)} 秒）` : ""}</div>
-        <div class="muted">${tw(m.sentAt)} 傳的 ${hideBtn(`${m.id}:0`, "隱藏")}</div>
+        <div class="muted">${tw(m.sentAt)} 傳的</div>
         ${m.mediaUrl ? (m.kind === "video" ? `<video controls preload="none" playsinline src="${esc(m.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(m.mediaUrl)}"></audio>`) : ""}</div>
+        ${moreBtn(`${m.id}:0`, true, `${m.memberName ?? "家人"}的${KIND[m.kind]}（${tw(m.sentAt)}）`, m.thumbUrl)}
       </div>`).join("")}`
     : `<div class="muted">播放訊息裡目前沒有東西</div>`;
 
@@ -217,14 +257,14 @@ function renderWindow(w) {
   const log = w.log.length ? `<table>${rows}</table>` : `<div class="muted">還沒有點擊紀錄（裝了新版之後才會有）</div>`;
 
   const hidden = w.hidden.length
-    ? `<div class="muted">平板不會顯示這些（相框、播放訊息、新分享都不出現）；資料沒有刪，按「取消隱藏」就回來</div>${w.hidden.map((h) => `<div class="listen">
+    ? `<div class="muted">平板不會顯示這些（相框、播放訊息、新分享都不出現）；資料沒有刪，按右下角的「⋯」可以取消隱藏</div>${w.hidden.map((h) => `<div class="listen">
         ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : "▶"}</div>`}
         <div style="flex:1;min-width:0"><div><b>${esc(h.memberName ?? "家人")}</b> 的${KIND[h.kind]}${h.kind === "photos" ? ` 第 ${h.idx + 1} 張` : ""}</div>
         <div class="muted">${tw(h.sentAt)} 傳的 · ${tw(h.hiddenAt)} 隱藏</div>
         ${h.mediaUrl ? (h.kind === "video" ? `<video controls preload="none" playsinline src="${esc(h.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(h.mediaUrl)}"></audio>`) : ""}
-        <button class="hide" data-key="${esc(`${h.messageId}:${h.idx}`)}" data-hidden="0" style="color:var(--accent)">取消隱藏</button></div>
+        </div>${moreBtn(`${h.messageId}:${h.idx}`, false, `${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}）`, h.thumbUrl)}
       </div>`).join("")}`
-    : `<div class="muted">沒有隱藏的內容。相框或播放訊息裡按「隱藏」，平板一分鐘內就不再顯示（不刪資料）</div>`;
+    : `<div class="muted">沒有隱藏的內容。相框或播放訊息裡按右下角的「⋯」可以隱藏，平板一分鐘內就不再顯示（不刪資料）</div>`;
 
   const counts = w.features[ui.range] ?? {};
   const ranked = Object.entries(counts).filter(([k]) => k !== "missed").sort((a, b) => b[1] - a[1]);
@@ -282,7 +322,7 @@ async function load() {
   // 有影片或語音正在播就不自動更新（不打斷 Founder 聽）
   timer = setTimeout(function tick() {
     const playing = [...document.querySelectorAll("audio, video")].some((m) => !m.paused);
-    playing ? (timer = setTimeout(tick, 60000)) : load();
+    playing || sheetOpen ? (timer = setTimeout(tick, 60000)) : load();
   }, 60000);
 }
 load();
