@@ -44,6 +44,25 @@
   .login input { width: 100%; font: inherit; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--text); margin: 8px 0; }
   .login button { width: 100%; padding: 10px; }
   details summary { cursor: pointer; color: var(--accent); font-size: 14px; margin-top: 8px; }
+  button.hide { font-size: 12px; padding: 1px 8px; border-radius: 8px; color: var(--warn); margin: 2px 4px 0 0; }
+  .hides { padding: 0 2px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+  .seg button { border: 0; border-radius: 0; font-size: 14px; }
+  .seg button.on { background: var(--accent); color: #fff; }
+  .bar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; font-size: 14px; padding: 3px 0; }
+  .bar .track { grid-column: 1 / -1; height: 6px; background: var(--bg); border-radius: 3px; overflow: hidden; }
+  .bar .fill { height: 100%; background: var(--accent); border-radius: 3px; }
+  .bar.missed .fill { background: var(--warn); }
+  .bar b { font-variant-numeric: tabular-nums; }
+  .journey { border-top: 1px solid var(--line); padding: 6px 0; }
+  .journey > summary { color: var(--text); font-size: 14px; margin: 0; list-style: none; }
+  .journey > summary::-webkit-details-marker { display: none; }
+  .journey .path { font-size: 13px; color: var(--muted); margin: 6px 0 2px; line-height: 1.9; }
+  .chip { display: inline-block; font-size: 12px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--line); margin-left: 4px; white-space: nowrap; }
+  .chip.good { border-color: var(--accent); color: var(--accent); }
+  .chip.bad { border-color: var(--warn); color: var(--warn); }
+  .step { white-space: nowrap; }
+  .step.scr { color: var(--text); }
 </style>
 </head>
 <body>
@@ -66,6 +85,26 @@ const TARGETS = {
   "S08.done": "「說好了」", "S10.back": "「回到相框」", "S14.talk": "「跟家人說早安」", "S15.end": "「結束播放」", screen: "畫面（沒點到按鈕）", button: "按鈕",
 };
 const KIND = { photos: "照片", video: "影片", voice: "語音" };
+// D-61 ①：功能排行與使用路徑的名字
+const EVENT_NAMES = { announce_shown: "新分享宣布", play_completed: "看完／聽完一則", play_skipped: "跳過一則", record_sent: "說話送出（帶話給家人）", record_abandoned: "說話沒送出", listen_started: "開始播放訊息", listen_ended: "播放訊息結束", tap_invalid: "點了沒反應", prompt_repeated: "伴伴再提醒一次" };
+const SWIPE_NAMES = { S04: "在相框左右滑", S06: "播放時左右滑", S15: "在播放訊息左右滑" };
+const featureName = (code) => {
+  if (code === "missed") return "點了沒反應（沒點到按鈕）";
+  const [type, rest] = [code.slice(0, code.indexOf(":")), code.slice(code.indexOf(":") + 1)];
+  if (type === "tap") return rest === "S10.person" ? "點「想跟誰說話」裡的家人" : rest === "screen" ? "點相框的照片（沒點到按鈕）" : `點${targetName(rest)}`;
+  if (type === "swipe") return SWIPE_NAMES[rest] ?? `在 ${screenName(rest)} 左右滑`;
+  return EVENT_NAMES[rest] ?? rest;
+};
+const triggerName = (t) => {
+  if (t === "announce") return "家人傳來新分享";
+  if (t === "swipe") return "阿嬤滑相框";
+  if (t.startsWith("tap:")) return `阿嬤點了${targetName(t.slice(4))}`;
+  if (t.startsWith("screen:")) return screenName(t.slice(7));
+  return t;
+};
+const dur = (ms) => (ms < 60000 ? `${Math.max(1, Math.round(ms / 1000))} 秒` : `${Math.floor(ms / 60000)} 分 ${Math.round((ms % 60000) / 1000)} 秒`);
+// 重新整理時保留：哪幾次使用是打開的、排行看 7 天還是 30 天
+const ui = { open: new Set(), range: "d7" };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const tw = (iso, withDate = true) => iso ? new Intl.DateTimeFormat("zh-TW", { timeZone: "Asia/Taipei", hour12: false, ...(withDate ? { month: "2-digit", day: "2-digit" } : {}), hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(iso)) : "—";
 const ago = (iso) => {
@@ -112,6 +151,34 @@ function focusLabel(w, focus) {
   return `${esc(m.memberName ?? "家人")}的${KIND[m.kind] ?? ""}${m.kind === "photos" ? ` 第 ${Number(idx) + 1} 張` : ""}（${tw(m.sentAt)}）`;
 }
 
+const hideBtn = (key, label) => `<button class="hide" data-key="${esc(key)}" data-hidden="1">${esc(label)}</button>`;
+
+// D-61 ②：隱藏、取消隱藏（不刪資料）
+async function setHidden(key, hidden) {
+  const [messageId, idx] = key.split(":");
+  const ok = hidden
+    ? confirm("要把這一則從平板上隱藏嗎？\n\n平板大約一分鐘內就不再顯示（相框、播放訊息都不出現）。\n不會刪掉資料，也不會通知家人；之後可以在「已隱藏」取消。")
+    : confirm("要取消隱藏嗎？平板下次同步就會再顯示。");
+  if (!ok) return;
+  const res = await fetch(`${API}/hide`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${store.get()}` }, body: JSON.stringify({ messageId, idx: Number(idx), hidden }) }).catch(() => null);
+  if (!res) return alert("連不上伺服器，請稍後再試");
+  if (res.status === 401) { store.set(null); return renderLogin("請重新登入"); }
+  if (!res.ok) return alert("沒有成功，請重新整理再試一次");
+  load();
+}
+
+app.addEventListener("click", (e) => {
+  const b = e.target.closest("button.hide");
+  if (b) return void setHidden(b.dataset.key, b.dataset.hidden === "1");
+  const r = e.target.closest(".seg button");
+  if (r) { ui.range = r.dataset.range; load(); }
+});
+app.addEventListener("toggle", (e) => {
+  const d = e.target;
+  if (!d.classList || !d.classList.contains("journey")) return;
+  d.open ? ui.open.add(d.dataset.key) : ui.open.delete(d.dataset.key);
+}, true);
+
 function renderWindow(w) {
   const d = w.device;
   const dev = d
@@ -126,6 +193,7 @@ function renderWindow(w) {
        <div class="pages">${pages.map((p, i) => `<div class="page${i === w.frame.index ? " now" : ""}">
           <div class="imgs">${p.map((s) => (s.url ? `<img loading="lazy" src="${esc(s.url)}" alt="" />` : `<div style="flex:1;color:#fff;font-size:12px;padding:6px">沒有縮圖</div>`)).join("")}</div>
           <div class="cap">${i + 1}. ${i === w.frame.index ? '<span class="tag">正在顯示</span> ' : ""}${p.length === 2 ? "兩張並排 · " : ""}${p[0].kind === "default" ? "預設照片" : `${esc(p[0].memberName ?? "家人")}${p[0].kind === "video" ? "的影片" : ""} · ${tw(p[0].sentAt)}`}</div>
+          <div class="hides">${p.map((sl, j) => (sl.kind === "default" ? "" : hideBtn(sl.key, p.length === 2 ? (j === 0 ? "隱藏左邊" : "隱藏右邊") : sl.kind === "video" ? "隱藏影片" : "隱藏"))).join("")}</div>
         </div>`).join("")}</div>`
     : `<div class="muted">平板還沒回報相框（裝了新版、進到相框之後一分鐘內會出現）</div>`;
 
@@ -133,7 +201,7 @@ function renderWindow(w) {
     ? `<div class="muted">點選項「播放訊息」時，照這個順序播放（左右滑會繞一圈）</div>${w.listen.map((m, i) => `<div class="listen">
         ${m.thumbUrl ? `<img loading="lazy" src="${esc(m.thumbUrl)}" alt="" />` : `<div class="ph">${m.kind === "voice" ? "🎙" : "▶"}</div>`}
         <div style="flex:1;min-width:0"><div><b>${i + 1}. ${esc(m.memberName ?? "家人")}</b> 的${KIND[m.kind]}${m.durationMs ? `（${Math.round(m.durationMs / 1000)} 秒）` : ""}</div>
-        <div class="muted">${tw(m.sentAt)} 傳的</div>
+        <div class="muted">${tw(m.sentAt)} 傳的 ${hideBtn(`${m.id}:0`, "隱藏")}</div>
         ${m.mediaUrl ? (m.kind === "video" ? `<video controls preload="none" playsinline src="${esc(m.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(m.mediaUrl)}"></audio>`) : ""}</div>
       </div>`).join("")}`
     : `<div class="muted">播放訊息裡目前沒有東西</div>`;
@@ -148,13 +216,49 @@ function renderWindow(w) {
   }).join("");
   const log = w.log.length ? `<table>${rows}</table>` : `<div class="muted">還沒有點擊紀錄（裝了新版之後才會有）</div>`;
 
+  const hidden = w.hidden.length
+    ? `<div class="muted">平板不會顯示這些（相框、播放訊息、新分享都不出現）；資料沒有刪，按「取消隱藏」就回來</div>${w.hidden.map((h) => `<div class="listen">
+        ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : "▶"}</div>`}
+        <div style="flex:1;min-width:0"><div><b>${esc(h.memberName ?? "家人")}</b> 的${KIND[h.kind]}${h.kind === "photos" ? ` 第 ${h.idx + 1} 張` : ""}</div>
+        <div class="muted">${tw(h.sentAt)} 傳的 · ${tw(h.hiddenAt)} 隱藏</div>
+        ${h.mediaUrl ? (h.kind === "video" ? `<video controls preload="none" playsinline src="${esc(h.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(h.mediaUrl)}"></audio>`) : ""}
+        <button class="hide" data-key="${esc(`${h.messageId}:${h.idx}`)}" data-hidden="0" style="color:var(--accent)">取消隱藏</button></div>
+      </div>`).join("")}`
+    : `<div class="muted">沒有隱藏的內容。相框或播放訊息裡按「隱藏」，平板一分鐘內就不再顯示（不刪資料）</div>`;
+
+  const counts = w.features[ui.range] ?? {};
+  const ranked = Object.entries(counts).filter(([k]) => k !== "missed").sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...ranked.map(([, n]) => n), counts.missed ?? 0);
+  const barRow = (name, n, cls = "") => `<div class="bar ${cls}"><span>${esc(name)}</span><b>${n}</b><div class="track"><div class="fill" style="width:${Math.round((n / max) * 100)}%"></div></div></div>`;
+  const features = `<div class="seg" data-wid="${esc(w.id)}"><button data-range="d7" class="${ui.range === "d7" ? "on" : ""}">近 7 天</button><button data-range="d30" class="${ui.range === "d30" ? "on" : ""}">近 30 天</button></div>
+    ${ranked.length || counts.missed ? `${ranked.map(([k, n]) => barRow(featureName(k), n)).join("")}${counts.missed ? barRow(featureName("missed"), counts.missed, "missed") : ""}` : '<div class="muted">這段時間還沒有使用紀錄</div>'}`;
+
+  const stepHtml = (st) => {
+    if (st.kind === "screen") return `<span class="step scr">［${esc(SCREENS[st.code] ?? st.code)}］</span>`;
+    if (st.kind === "tap") { const [, target] = st.code.split("|"); return `<span class="step">點${esc(targetName(target))}</span>`; }
+    if (st.kind === "swipe") { const [, dir] = st.code.split("|"); return `<span class="step">${dir === "prev" ? "往右滑" : "往左滑"}</span>`; }
+    return `<span class="step"><i>${esc(EVENT_NAMES[st.code] ?? st.code)}</i></span>`;
+  };
+  const journeys = w.journeys.length
+    ? `<div class="muted">一次使用＝從家人傳來新分享或阿嬤點、滑平板開始，到回相框（或 3 分鐘沒動作）為止。點一下看路徑。</div>${w.journeys.map((j) => {
+        const o = j.outcomes;
+        const chips = [o.played ? `<span class="chip good">看完 ${o.played}</span>` : "", o.replayed ? `<span class="chip good">重看 ${o.replayed}</span>` : "", o.sent ? `<span class="chip good">說話送出 ${o.sent}</span>` : "", o.listened ? `<span class="chip good">播放訊息</span>` : "", o.abandoned ? `<span class="chip bad">說話沒送出 ${o.abandoned}</span>` : "", o.missedTaps ? `<span class="chip bad">點了沒反應 ${o.missedTaps}</span>` : ""].join("");
+        const key = `${w.id}|${j.start}`;
+        return `<details class="journey" data-key="${esc(key)}"${ui.open.has(key) ? " open" : ""}><summary><b>${tw(j.start)}</b> · ${esc(triggerName(j.trigger))} · ${dur(j.durationMs)}${chips}</summary>
+          <div class="path">${j.steps.map(stepHtml).join(" → ")}</div></details>`;
+      }).join("")}`
+    : `<div class="muted">最近 30 天還沒有使用紀錄（平板裝了新版之後才有點擊紀錄）</div>`;
+
   const elder = w.elderNames.length ? w.elderNames.join("、") : w.salutation;
   return `<section class="card">
     <h2>${esc(elder)} 的家${w.paused ? ' <span class="tag">暫停中</span>' : ""}</h2>
     ${dev}
     <h3>相框</h3>${frame}
     <h3>播放訊息</h3>${listen}
-    <h3>點擊與操作紀錄 <span class="muted">（最近 ${w.log.length} 筆，台灣時間）</span></h3>${log}
+    <h3>已隱藏</h3>${hidden}
+    <h3>功能使用排行</h3>${features}
+    <h3>每次使用的路徑 <span class="muted">（最近 ${w.journeys.length} 次，台灣時間）</span></h3>${journeys}
+    <details><summary>點擊與操作紀錄（最近 ${w.log.length} 筆）</summary> ${log}</details>
   </section>`;
 }
 
