@@ -51,6 +51,9 @@
   .hcell { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; background: var(--bg); }
   .hcell img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .6; }
   .hcell .ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .hcell.cc { width: 84px; height: 84px; }
+  .hcell.cc img { opacity: 1; }
+  .hcell.cc .new { position: absolute; left: 3px; top: 3px; background: var(--warn, #b45309); color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 4px; }
   .hcell button.more { right: 2px; bottom: 2px; width: 22px; height: 16px; line-height: 16px; font-size: 11px; }
   button.more { position: absolute; right: 3px; bottom: 3px; width: 26px; height: 20px; padding: 0; border: 0; border-radius: 6px; background: rgba(0,0,0,.35); color: #fff; font-size: 13px; line-height: 20px; letter-spacing: 1px; }
   .listen { position: relative; padding-right: 30px; }
@@ -261,6 +264,20 @@ function renderWindow(w) {
   const log = w.log.length ? `<table>${rows}</table>` : `<div class="muted">還沒有點擊紀錄（裝了新版之後才會有）</div>`;
 
   // 已隱藏：只放小縮圖，不佔畫面；按「⋯」可以取消隱藏
+  // 雲端有、平板還沒回報的（離線、還沒同步、還沒宣布）：在這裡就能先隱藏，平板連上後不會出現
+  const offline = !d || !d.lastSeenAt || Date.now() - new Date(d.lastSeenAt).getTime() > 5 * 60_000;
+  const cloudLabel = (c) => `${c.memberName ?? "家人"}的${KIND[c.kind]}（${tw(c.sentAt)}）`;
+  const cloud = w.cloud.length
+    ? `<h3>雲端的新內容 <span class="muted">（${w.cloud.length}，平板還沒顯示）</span></h3>
+       <div class="muted">家人傳了、但平板還沒拿到或還沒回報的。按「⋯」可以先隱藏，平板${offline ? "連上網路後" : "一分鐘內"}同步時就不會出現。「新」＝阿嬤還沒看過、還沒宣布。</div>
+       <div class="hgrid">${w.cloud.map((c) => `<div class="hcell cc" title="${esc(cloudLabel(c))}">
+        ${c.thumbUrl ? `<img loading="lazy" src="${esc(c.thumbUrl)}" alt="" />` : `<div class="ph">🎙</div>`}
+        ${c.announced ? "" : `<span class="new">新</span>`}
+        ${moreBtn(`${c.messageId}:${c.idx}`, true, cloudLabel(c), c.thumbUrl)}
+      </div>`).join("")}</div>`
+    : "";
+  const offlineNote = d && offline ? `<div class="warn">平板目前離線：下面的相框與播放訊息是它最後一次回報的樣子。隱藏會先存在雲端，平板連上後自動拿掉。</div>` : "";
+
   const hidden = w.hidden.length
     ? `<div class="muted">平板不會顯示這些；資料沒有刪，按「⋯」可以取消隱藏</div><div class="hgrid">${w.hidden.map((h) => `<div class="hcell" title="${esc(`${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}）`)}">
         ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : "▶"}</div>`}
@@ -295,6 +312,8 @@ function renderWindow(w) {
   return `<section class="card">
     <h2>${esc(elder)} 的家${w.paused ? ' <span class="tag">暫停中</span>' : ""}</h2>
     ${dev}
+    ${offlineNote}
+    ${cloud}
     <h3>相框</h3>${frame}
     <h3>播放訊息</h3>${listen}
     <h3>已隱藏${w.hidden.length ? ` <span class="muted">（${w.hidden.length}）</span>` : ""}</h3>${hidden}
