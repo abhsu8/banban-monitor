@@ -51,6 +51,7 @@
   .hcell { position: relative; width: 56px; height: 56px; border-radius: 8px; overflow: hidden; background: var(--bg); }
   .hcell img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .6; }
   .hcell .ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+  .say { margin-top: 4px; padding: 6px 8px; background: var(--bg); border-radius: 8px; white-space: pre-wrap; word-break: break-word; }
   .hcell.cc { width: 84px; height: 84px; }
   .hcell.cc img { opacity: 1; }
   .hcell.cc .new { position: absolute; left: 3px; top: 3px; background: var(--warn, #b45309); color: #fff; font-size: 10px; padding: 1px 4px; border-radius: 4px; }
@@ -103,7 +104,7 @@ const TARGETS = {
   "S05.play": "「播放」", "S07.end": "「結束」", "S07.talk": "「帶話給…」", "S07.replay_photo": "照片（再看一次）", "S07.replay_hint": "「點一下，可以再看一次」",
   "S08.done": "「說好了」", "S10.back": "「回到相框」", "S14.talk": "「跟家人說早安」", "S15.end": "「結束播放」", screen: "畫面（沒點到按鈕）", button: "按鈕",
 };
-const KIND = { photos: "照片", video: "影片", voice: "語音" };
+const KIND = { photos: "照片", video: "影片", voice: "語音", text: "文字卡" };
 // D-61 ①：功能排行與使用路徑的名字
 const EVENT_NAMES = { announce_shown: "新分享宣布", play_completed: "看完／聽完一則", play_skipped: "跳過一則", record_sent: "說話送出（帶話給家人）", record_abandoned: "說話沒送出", listen_started: "開始播放訊息", listen_ended: "播放訊息結束", tap_invalid: "點了沒反應", prompt_repeated: "伴伴再提醒一次" };
 const SWIPE_NAMES = { S04: "在相框左右滑", S06: "播放時左右滑", S15: "在播放訊息左右滑" };
@@ -245,11 +246,13 @@ function renderWindow(w) {
 
   const listen = w.listen.length
     ? `<div class="muted">點選項「播放訊息」時，照這個順序播放（左右滑會繞一圈）</div>${w.listen.map((m, i) => `<div class="listen">
-        ${m.thumbUrl ? `<img loading="lazy" src="${esc(m.thumbUrl)}" alt="" />` : `<div class="ph">${m.kind === "voice" ? "🎙" : "▶"}</div>`}
-        <div style="flex:1;min-width:0"><div><b>${i + 1}. ${esc(m.memberName ?? "家人")}</b> 的${KIND[m.kind]}${m.durationMs ? `（${Math.round(m.durationMs / 1000)} 秒）` : ""}</div>
+        ${m.thumbUrl ? `<img loading="lazy" src="${esc(m.thumbUrl)}" alt="" />` : `<div class="ph">${m.kind === "voice" ? "🎙" : m.kind === "text" ? "💬" : "▶"}</div>`}
+        <div style="flex:1;min-width:0"><div><b>${i + 1}. ${esc(m.memberName ?? "家人")}</b> 的${m.kind === "photos" && m.caption ? "照片（有字幕）" : KIND[m.kind]}${m.durationMs ? `（${Math.round(m.durationMs / 1000)} 秒）` : ""}</div>
         <div class="muted">${tw(m.sentAt)} 傳的</div>
+        ${m.text !== null && m.text !== undefined ? `<div class="say">${esc(m.text)}</div>` : ""}
+        ${m.caption ? `<div class="say">字幕：${esc(m.caption)}</div>` : ""}
         ${m.mediaUrl ? (m.kind === "video" ? `<video controls preload="none" playsinline src="${esc(m.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(m.mediaUrl)}"></audio>`) : ""}</div>
-        ${moreBtn(`${m.id}:0`, true, `${m.memberName ?? "家人"}的${KIND[m.kind]}（${tw(m.sentAt)}）`, m.thumbUrl)}
+        ${m.hideIdx === null || m.hideIdx === undefined ? "" : moreBtn(`${m.id}:${m.hideIdx}`, true, `${m.memberName ?? "家人"}的${KIND[m.kind]}（${tw(m.sentAt)}）`, m.thumbUrl)}
       </div>`).join("")}`
     : `<div class="muted">播放訊息裡目前沒有東西</div>`;
 
