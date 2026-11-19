@@ -195,8 +195,13 @@ function openSheet(b) {
     () => { bg.querySelector("#sh-yes").onclick = send; bg.querySelector("#sh-no").onclick = close; });
   const send = async () => {
     step(`<p>處理中…</p>`, () => {});
-    const [messageId, idx] = key.split(":");
-    const res = await fetch(`${API}/hide`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${store.get()}` }, body: JSON.stringify({ messageId, idx: Number(idx), hidden: hide }) }).catch(() => null);
+    // key =「訊息ID:第幾張」；文字卡可能是好幾則文字組成的：「ID,ID:0」，每一則都送
+    const [ids, idx] = key.split(":");
+    let res = null;
+    for (const messageId of ids.split(",")) {
+      res = await fetch(`${API}/hide`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${store.get()}` }, body: JSON.stringify({ messageId, idx: Number(idx), hidden: hide }) }).catch(() => null);
+      if (!res || !res.ok) break;
+    }
     if (res && res.status === 401) { close(); store.set(null); return renderLogin("請重新登入"); }
     const msg = !res ? "連不上伺服器，請稍後再試" : !res.ok ? `沒有成功（${res.status}），請重新整理再試一次` : hide ? "已隱藏。平板大約一分鐘內就不再顯示。" : "已取消隱藏。平板大約一分鐘內就會再顯示。";
     step(`<p>${esc(msg)}</p><button id="sh-ok" class="primary">好</button>`, () => { bg.querySelector("#sh-ok").onclick = close; });
@@ -252,7 +257,7 @@ function renderWindow(w) {
         ${m.text !== null && m.text !== undefined ? `<div class="say">${esc(m.text)}</div>` : ""}
         ${m.caption ? `<div class="say">字幕：${esc(m.caption)}</div>` : ""}
         ${m.mediaUrl ? (m.kind === "video" ? `<video controls preload="none" playsinline src="${esc(m.mediaUrl)}"></video>` : `<audio controls preload="none" src="${esc(m.mediaUrl)}"></audio>`) : ""}</div>
-        ${m.hideIdx === null || m.hideIdx === undefined ? "" : moreBtn(`${m.id}:${m.hideIdx}`, true, `${m.memberName ?? "家人"}的${KIND[m.kind]}（${tw(m.sentAt)}）`, m.thumbUrl)}
+        ${moreBtn(`${(m.hideIds ?? [m.id]).join(",")}:${m.hideIdx ?? 0}`, true, m.kind === "text" ? `${m.memberName ?? "家人"}的文字卡「${(m.text ?? "").slice(0, 20)}」（${tw(m.sentAt)}）` : `${m.memberName ?? "家人"}的${KIND[m.kind]}（${tw(m.sentAt)}）`, m.thumbUrl)}
       </div>`).join("")}`
     : `<div class="muted">播放訊息裡目前沒有東西</div>`;
 
@@ -282,9 +287,9 @@ function renderWindow(w) {
   const offlineNote = d && offline ? `<div class="warn">平板目前離線：下面的相框與播放訊息是它最後一次回報的樣子。隱藏會先存在雲端，平板連上後自動拿掉。</div>` : "";
 
   const hidden = w.hidden.length
-    ? `<div class="muted">平板不會顯示這些；資料沒有刪，按「⋯」可以取消隱藏</div><div class="hgrid">${w.hidden.map((h) => `<div class="hcell" title="${esc(`${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}）`)}">
-        ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : "▶"}</div>`}
-        ${moreBtn(`${h.messageId}:${h.idx}`, false, `${h.memberName ?? "家人"}的${KIND[h.kind]}（${tw(h.sentAt)}，${tw(h.hiddenAt)} 隱藏）`, h.thumbUrl)}
+    ? `<div class="muted">平板不會顯示這些；資料沒有刪，按「⋯」可以取消隱藏</div><div class="hgrid">${w.hidden.map((h) => `<div class="hcell" title="${esc(`${h.memberName ?? "家人"}的${KIND[h.kind]}${h.text ? `「${h.text}」` : ""}（${tw(h.sentAt)}）`)}">
+        ${h.thumbUrl ? `<img loading="lazy" src="${esc(h.thumbUrl)}" alt="" />` : `<div class="ph">${h.kind === "voice" ? "🎙" : h.kind === "text" ? "💬" : "▶"}</div>`}
+        ${moreBtn(`${h.messageId}:${h.idx}`, false, `${h.memberName ?? "家人"}的${KIND[h.kind]}${h.text ? `「${h.text.slice(0, 20)}」` : ""}（${tw(h.sentAt)}，${tw(h.hiddenAt)} 隱藏）`, h.thumbUrl)}
       </div>`).join("")}</div>`
     : `<div class="muted">沒有隱藏的內容。相框或播放訊息裡按右下角的「⋯」可以隱藏，平板一分鐘內就不再顯示（不刪資料）</div>`;
 
